@@ -20,7 +20,7 @@ import (
 //go:embed icon.png
 var iconBytes []byte
 
-var desktopVersion = "0.4.0"
+var desktopVersion = "0.4.1"
 
 func main() {
 	// 单实例保护：已有实例在运行时，唤起它的控制面板并退出，
@@ -32,7 +32,10 @@ func main() {
 	}
 
 	manager := NewManager()
-	manager.SetTunMode(true) // 默认整机分流：SSH/VS Code/浏览器等零配置透明访问
+	// 默认整机分流：SSH/VS Code/浏览器等零配置透明访问（Windows 暂仅代理模式）
+	if runtime.GOOS != "windows" {
+		manager.SetTunMode(true)
+	}
 	dns := newSysDNS()
 	manager.SysDNS = dns
 
@@ -110,7 +113,12 @@ func onReady(m *Manager, panelURL string, proxy *sysProxy, dns *sysDNS) {
 	mRestart := systray.AddMenuItem("重新连接", "断开并重新连接")
 	mWholeMachine := systray.AddMenuItem("整机分流模式",
 		"开启后 SSH / VS Code / 浏览器等所有程序零配置直访校内网（需要管理员权限，连接时会弹一次密码框）；关闭则使用系统代理分流（仅浏览器）")
-	mWholeMachine.Check()
+	if runtime.GOOS == "windows" {
+		mWholeMachine.Uncheck()
+		mWholeMachine.Disable()
+	} else {
+		mWholeMachine.Check()
+	}
 	mAutoProxy := systray.AddMenuItem("浏览器直连分流（系统代理）",
 		"代理模式下连接后自动配置系统 PAC，浏览器无需任何设置即可访问校内网；断开时自动还原")
 	if proxy != nil && proxy.State() != "unsupported" {

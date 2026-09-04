@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -44,7 +43,8 @@ func (m *Manager) writeTunHelper() (string, error) {
 }
 
 // launchRoot 以管理员权限后台执行辅助脚本。
-// macOS 用 osascript（GUI 密码框）；Linux 用 pkexec；Windows 用 UAC。
+// macOS 用 osascript（GUI 密码框）；Linux 用 pkexec。
+// Windows 的整机模式尚未实现（未经实测），返回不支持。
 func launchRoot(script string) error {
 	switch runtime.GOOS {
 	case "darwin":
@@ -64,24 +64,8 @@ func launchRoot(script string) error {
 			return fmt.Errorf("pkexec 启动失败: %s: %v", strings.TrimSpace(string(out)), err)
 		}
 		return nil
-	case "windows":
-		ps := fmt.Sprintf(`Start-Process -Verb RunAs -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList '/c','start','/b','','sh','%s'`, script)
-		if out, err := exec.Command("powershell", "-Command", ps).CombinedOutput(); err != nil {
-			return fmt.Errorf("UAC 启动失败: %s: %v", strings.TrimSpace(string(out)), err)
-		}
-		return nil
 	}
-	return fmt.Errorf("当前平台不支持整机分流")
-}
-
-// rootChildAlive 通过信号探测判断 root 子进程是否存活
-//（对 root 进程 kill -0 返回 EPERM，同样代表存活）
-func rootChildAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
+	return fmt.Errorf("当前平台暂不支持整机分流，请在托盘菜单关闭整机模式使用代理分流")
 }
 
 func (m *Manager) readTunPid() int {
