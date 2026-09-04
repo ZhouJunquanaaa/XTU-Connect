@@ -106,6 +106,7 @@ async function refresh() {
     $('dot').className = 'dot ' + st.state;
     $('state').textContent = st.state_text + (st.state==='running' && st.started_at ? `（已运行 ${fmtDuration(Date.now()/1000 - st.started_at)}）` : '');
     const lines = [];
+    lines.push(st.mode === 'tun' ? '分流模式：整机（SSH / VS Code / 浏览器全部免配置）' : '分流模式：代理（SSH 需系统代理配合，浏览器自动分流）');
     if (st.client_ip) lines.push(`内网 IP：${st.client_ip}`);
     if (st.socks_addr) lines.push(`SOCKS5 代理：${st.socks_addr}　HTTP 代理：127.0.0.1:1081`);
     if (st.system_proxy === 'on') lines.push('浏览器分流：已启用 —— 浏览器无需设置，可直接访问校内网');

@@ -43,6 +43,7 @@ func (s State) Text() string {
 type Status struct {
 	State          State  `json:"state"`
 	StateText      string `json:"state_text"`
+	Mode           string `json:"mode"` // tun=整机分流 / proxy=代理模式
 	ClientIP       string `json:"client_ip,omitempty"`
 	SocksAddr      string `json:"socks_addr,omitempty"`
 	LastError      string `json:"last_error,omitempty"`
@@ -70,17 +71,32 @@ type Manager struct {
 	logPath   string
 	logFile   *os.File
 	cliBin    string
-	SysProxy  *sysProxy // 连接成功后自动接管系统代理（浏览器零配置分流）
+	SysProxy  *sysProxy // 代理模式：连接后接管系统 PAC
+	SysDNS    *sysDNS   // 整机模式：连接后接管系统 DNS
+
+	tunMode     bool   // 整机分流（TUN）模式开关
+	tunPidFile  string // root 子进程 PID 文件
+	tunFlagFile string // 停止标志文件
+	tunLogFile  string // root 子进程日志
 }
 
-// setStateLocked 更新状态并在关键跃迁时触发系统代理接管/恢复
+// setStateLocked 更新状态并在关键跃迁时触发系统代理/DNS 接管或恢复
 func (m *Manager) setStateLocked(to State) {
 	if m.state == to {
 		return
 	}
 	m.state = to
 	var hook func()
-	if m.SysProxy != nil {
+	if m.tunMode {
+		if m.SysDNS != nil {
+			switch to {
+			case StateRunning:
+				hook = m.SysDNS.Apply
+			case StateStopped, StateError:
+				hook = m.SysDNS.Restore
+			}
+		}
+	} else if m.SysProxy != nil {
 		switch to {
 		case StateRunning:
 			hook = m.SysProxy.Apply
@@ -93,13 +109,32 @@ func (m *Manager) setStateLocked(to State) {
 	}
 }
 
+// HasCreds 报告是否已配置校园网凭据
+func (m *Manager) HasCreds() bool { return configs.Exists() }
+
+// SetTunMode 切换整机分流模式（下次 Start 生效）
+func (m *Manager) SetTunMode(on bool) {
+	m.mu.Lock()
+	m.tunMode = on
+	m.mu.Unlock()
+}
+
+func (m *Manager) TunMode() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.tunMode
+}
+
 func NewManager() *Manager {
 	home, _ := os.UserHomeDir()
 	logPath := filepath.Join(home, ".config", "xtu-connect", "desktop.log")
 	return &Manager{
-		state:   StateStopped,
-		logPath: logPath,
-		cliBin:  findCLIBinary(),
+		state:       StateStopped,
+		logPath:     logPath,
+		cliBin:      findCLIBinary(),
+		tunPidFile:  filepath.Join(home, ".config", "xtu-connect", "tun.pid"),
+		tunFlagFile: filepath.Join(home, ".config", "xtu-connect", "tun.stop"),
+		tunLogFile:  filepath.Join(home, ".config", "xtu-connect", "tun-child.log"),
 	}
 }
 
@@ -131,10 +166,14 @@ func isExecutable(path string) bool {
 	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
-// Start 启动 VPN（与其他生命周期操作互斥）
+// Start 启动 VPN（与其他生命周期操作互斥）；整机分流模式下走 root 路径
 func (m *Manager) Start() error {
 	m.actionMu.Lock()
 	defer m.actionMu.Unlock()
+	if m.TunMode() {
+		m.stop() // 确保代理模式子进程不在运行
+		return m.startTun()
+	}
 	return m.start()
 }
 
@@ -234,39 +273,46 @@ func (m *Manager) pipeLogs(reader io.Reader, logFile *os.File) {
 		line := scanner.Text()
 		writer.WriteString(line + "\n")
 		writer.Flush()
-
-		m.mu.Lock()
-		m.logLines = append(m.logLines, line)
-		if len(m.logLines) > maxLogLines {
-			m.logLines = m.logLines[len(m.logLines)-maxLogLines:]
-		}
-		switch {
-		case strings.Contains(line, "Login failed"):
-			m.lastErr = "登录失败：请检查学号密码（也可能被其他设备的登录挤下线）"
-			m.setStateLocked(StateError)
-		case strings.Contains(line, "VPN client setup error"):
-			m.setStateLocked(StateError)
-			if m.lastErr == "" {
-				m.lastErr = line
-			}
-		case strings.Contains(line, "SOCKS5 server listening on"):
-			if match := reSocks.FindStringSubmatch(line); match != nil {
-				m.socksAddr = match[1]
-				m.setStateLocked(StateRunning)
-			}
-		case strings.Contains(line, "Client IP:"):
-			if match := reClientIP.FindStringSubmatch(line); match != nil {
-				m.clientIP = match[1]
-			}
-		}
-		m.mu.Unlock()
+		m.parseLine(line)
 	}
 }
 
-// Stop 优雅停止子进程（SIGTERM，Windows 下直接 Kill），超时后强杀；幂等可重复调用
+// parseLine 解析子进程单行日志：写入内存缓冲并驱动状态机（两种模式共用）
+func (m *Manager) parseLine(line string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logLines = append(m.logLines, line)
+	if len(m.logLines) > maxLogLines {
+		m.logLines = m.logLines[len(m.logLines)-maxLogLines:]
+	}
+	switch {
+	case strings.Contains(line, "Login failed"):
+		m.lastErr = "登录失败：请检查学号密码（也可能被其他设备的登录挤下线）"
+		m.setStateLocked(StateError)
+	case strings.Contains(line, "VPN client setup error"):
+		m.setStateLocked(StateError)
+		if m.lastErr == "" {
+			m.lastErr = line
+		}
+	case strings.Contains(line, "SOCKS5 server listening on"):
+		if match := reSocks.FindStringSubmatch(line); match != nil {
+			m.socksAddr = match[1]
+			m.setStateLocked(StateRunning)
+		}
+	case strings.Contains(line, "Client IP:"):
+		if match := reClientIP.FindStringSubmatch(line); match != nil {
+			m.clientIP = match[1]
+		}
+	}
+}
+
+// Stop 优雅停止（幂等）：整机模式用停止标志，代理模式用 SIGTERM
 func (m *Manager) Stop() {
 	m.actionMu.Lock()
 	defer m.actionMu.Unlock()
+	if m.TunMode() || m.tunInUse() {
+		m.stopTun()
+	}
 	m.stop()
 }
 
@@ -295,10 +341,18 @@ func (m *Manager) stop() {
 func (m *Manager) Restart() {
 	m.actionMu.Lock()
 	defer m.actionMu.Unlock()
-	m.stop()
+	if m.TunMode() {
+		m.stopTun()
+	} else {
+		m.stop()
+	}
 	// 给服务端时间释放旧会话（单会话策略：同账号同时只允许一个在线客户端）
 	time.Sleep(2 * time.Second)
-	_ = m.start()
+	if m.TunMode() {
+		_ = m.startTun()
+	} else {
+		_ = m.start()
+	}
 }
 
 func (m *Manager) Status() Status {
@@ -306,11 +360,15 @@ func (m *Manager) Status() Status {
 	defer m.mu.Unlock()
 	s := Status{
 		State:     m.state,
+		Mode:      "proxy",
 		ClientIP:  m.clientIP,
 		SocksAddr: m.socksAddr,
 		LastError: m.lastErr,
 		HasCreds:  configs.Exists(),
 		CLIBinary: m.cliBin,
+	}
+	if m.tunMode {
+		s.Mode = "tun"
 	}
 	s.StateText = s.State.Text()
 	if !m.startedAt.IsZero() && (m.state == StateRunning || m.state == StateStarting) {

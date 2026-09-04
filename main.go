@@ -257,19 +257,31 @@ func main() {
 				ipResources = []client.IPResource{}
 			}
 
-			ipResources = append([]client.IPResource{{
-				IPMin:    net.ParseIP("10.0.0.0"),
-				IPMax:    net.ParseIP("10.255.255.255"),
-				PortMin:  1,
-				PortMax:  65535,
-				Protocol: "all",
-			}}, ipResources...)
+			// 湘大校园网实际使用的内网网段：10/8 与 172.16/12，
+			// 全端口强制走隧道（服务端仍会按授权策略过滤）
+			ipResources = append([]client.IPResource{
+				{
+					IPMin:    net.ParseIP("10.0.0.0"),
+					IPMax:    net.ParseIP("10.255.255.255"),
+					PortMin:  1,
+					PortMax:  65535,
+					Protocol: "all",
+				},
+				{
+					IPMin:    net.ParseIP("172.16.0.0"),
+					IPMax:    net.ParseIP("172.31.255.255"),
+					PortMin:  1,
+					PortMax:  65535,
+					Protocol: "all",
+				},
+			}, ipResources...)
 
 			ipSetBuilder := netaddr.IPSetBuilder{}
 			if ipSet != nil {
 				ipSetBuilder.AddSet(ipSet)
 			}
 			ipSetBuilder.AddPrefix(netaddr.MustParseIPPrefix("10.0.0.0/8"))
+			ipSetBuilder.AddPrefix(netaddr.MustParseIPPrefix("172.16.0.0/12"))
 			ipSet, _ = ipSetBuilder.IPSet()
 		}
 
