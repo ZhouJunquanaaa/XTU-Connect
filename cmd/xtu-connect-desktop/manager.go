@@ -399,6 +399,19 @@ func (m *Manager) LogTail(n int) []string {
 
 func (m *Manager) LogPath() string { return m.logPath }
 
+// logTailText 返回内存日志缓冲的最后 n 行（用于错误信息）
+func (m *Manager) logTailText(n int) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.logLines) == 0 {
+		return "（无日志输出，root 辅助脚本可能未执行）"
+	}
+	if len(m.logLines) > n {
+		return strings.Join(m.logLines[len(m.logLines)-n:], " | ")
+	}
+	return strings.Join(m.logLines, " | ")
+}
+
 // Running 报告 VPN 是否处于连接中/已连接状态
 func (m *Manager) Running() bool {
 	m.mu.Lock()

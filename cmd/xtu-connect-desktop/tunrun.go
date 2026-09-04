@@ -48,8 +48,10 @@ func (m *Manager) writeTunHelper() (string, error) {
 func launchRoot(script string) error {
 	switch runtime.GOOS {
 	case "darwin":
+		// 注意：do shell script 的管理员上下文退出时会杀掉 & 后台化的子进程
+		//（nohup/disown 均无效，已实测），必须用 sudo -b 让命令脱离该上下文
 		out, err := exec.Command("osascript", "-e",
-			`do shell script "nohup sh `+script+` >/dev/null 2>&1 & echo started" with administrator privileges`).
+			`do shell script "/usr/bin/sudo -b sh `+script+`" with administrator privileges`).
 			CombinedOutput()
 		if err != nil {
 			if strings.Contains(string(out), "User canceled") || strings.Contains(string(out), "-128") {
@@ -95,10 +97,14 @@ func (m *Manager) startTun() error {
 	if err != nil {
 		return err
 	}
-	// 清理上次残留
+	// 清理上次残留；日志保留历史（追加分隔行）便于排查
 	_ = os.Remove(m.tunFlagFile)
 	_ = os.Remove(m.tunPidFile)
-	_ = os.Truncate(m.tunLogFile, 0)
+	if f, err := os.OpenFile(m.tunLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+		fmt.Fprintf(f, "\n===== %s 整机模式启动 =====\n", time.Now().Format("2006-01-02 15:04:05"))
+		f.Close()
+	}
+	debugLog("tun: launching root helper %s", helper)
 
 	m.mu.Lock()
 	m.state = StateStarting
@@ -110,27 +116,38 @@ func (m *Manager) startTun() error {
 	m.mu.Unlock()
 
 	if err := launchRoot(helper); err != nil {
+		debugLog("tun: launch root failed: %v", err)
 		m.mu.Lock()
 		m.state = StateStopped
 		m.lastErr = err.Error()
 		m.mu.Unlock()
 		return err
 	}
+	debugLog("tun: root helper launched")
 	go m.monitorTun()
 	return nil
 }
 
 // monitorTun 轮询 root 子进程的日志文件与存活状态，驱动状态机
 func (m *Manager) monitorTun() {
-	// 等待 pidfile 出现（后台脚本启动需要一点时间），避免把启动窗口误判为退出
-	waitDeadline := time.Now().Add(15 * time.Second)
+	// 等待 pidfile 出现（密码框确认后脚本需要一点时间启动）
+	waitDeadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(waitDeadline) && m.readTunPid() == 0 {
 		time.Sleep(300 * time.Millisecond)
+	}
+	debugLog("tun: monitor begin, pid=%d", m.readTunPid())
+	if m.readTunPid() == 0 {
+		// 等待窗口内 pidfile 始终未出现：root 侧没有真正启动
+		m.mu.Lock()
+		m.setStateLocked(StateError)
+		m.lastErr = "root 辅助进程未启动（授权可能被取消或被系统拦截），详见 tun-child.log"
+		m.mu.Unlock()
+		return
 	}
 
 	offset := int64(0)
 	buf := make([]byte, 0, 4096)
-	lastAlive := true
+	lastAlive := rootChildAlive(m.readTunPid())
 	for {
 		time.Sleep(500 * time.Millisecond)
 
@@ -155,12 +172,17 @@ func (m *Manager) monitorTun() {
 
 		alive := rootChildAlive(m.readTunPid())
 		if lastAlive && !alive {
+			debugLog("tun: child exited")
 			m.mu.Lock()
 			if m.state != StateError {
 				m.setStateLocked(StateStopped)
 			}
-			if m.lastErr == "" && m.clientIP == "" {
-				m.lastErr = "整机分流进程已退出（详见日志）"
+			if m.lastErr == "" {
+				if m.clientIP == "" {
+					m.lastErr = "整机分流进程已退出：" + m.logTailText(3)
+				} else {
+					m.lastErr = "整机分流连接中断"
+				}
 			}
 			m.mu.Unlock()
 			return
