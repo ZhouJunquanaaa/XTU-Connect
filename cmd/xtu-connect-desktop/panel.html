@@ -108,6 +108,9 @@ async function refresh() {
     const lines = [];
     if (st.client_ip) lines.push(`内网 IP：${st.client_ip}`);
     if (st.socks_addr) lines.push(`SOCKS5 代理：${st.socks_addr}　HTTP 代理：127.0.0.1:1081`);
+    if (st.system_proxy === 'on') lines.push('浏览器分流：已启用 —— 浏览器无需设置，可直接访问校内网');
+    else if (st.system_proxy === 'conflict') lines.push('浏览器分流：未启用（' + (st.system_proxy_err || '系统代理被其他程序占用') + '）');
+    else if (st.system_proxy === 'unsupported') lines.push('浏览器分流：当前平台请手动将代理设为 127.0.0.1:1080');
     if (st.last_error) lines.push(`错误：${st.last_error}`);
     if (!lines.length && !st.has_credentials) lines.push('尚未配置凭据，请展开「账号设置」填写学号密码');
     if (!lines.length && st.cli_binary === '') lines.push('未找到 xtu-connect 主程序，请将它与本程序放在同一目录');

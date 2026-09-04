@@ -20,7 +20,7 @@ import (
 //go:embed icon.png
 var iconBytes []byte
 
-var desktopVersion = "0.2.1"
+var desktopVersion = "0.3.0"
 
 func main() {
 	// 单实例保护：已有实例在运行时，唤起它的控制面板并退出，
@@ -38,24 +38,39 @@ func main() {
 		fmt.Println("控制面板启动失败:", err)
 	}
 
+	// 连接成功后自动接管系统代理（PAC 分流）：浏览器零配置直访校内网
+	var proxy *sysProxy
+	if panelURL != "" {
+		proxy = newSysProxy(panelURL + "/proxy.pac")
+		manager.SysProxy = proxy
+	}
+
 	// 终端信号也走优雅退出：先停子进程再退托盘，不依赖 systray 的 onExit 时序
+	// SIGHUP 覆盖终端关闭/父进程退出的场景，避免遗留子进程与系统代理设置
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, os.Interrupt)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, os.Interrupt)
 	go func() {
 		<-sigCh
-		quitGracefully(manager)
+		quitGracefully(manager, proxy)
 	}()
 
-	systray.Run(func() { onReady(manager, panelURL) }, func() {
-		// 兜底：systray 退出回调（幂等）
+	systray.Run(func() { onReady(manager, panelURL, proxy) }, func() {
+		// 兜底：systray 退出回调（幂等，同步执行确保来得及）
 		manager.Stop()
+		if proxy != nil {
+			proxy.Restore()
+		}
 	})
 }
 
-// quitGracefully 先断开 VPN（可能耗时数秒），再结束托盘循环
-func quitGracefully(manager *Manager) {
+// quitGracefully 同步地：断开 VPN → 恢复系统代理 → 结束托盘循环。
+// 恢复必须同步完成，否则进程可能在系统命令执行完前退出，遗留 PAC 设置
+func quitGracefully(manager *Manager, proxy *sysProxy) {
 	go func() {
 		manager.Stop()
+		if proxy != nil {
+			proxy.Restore()
+		}
 		systray.Quit()
 	}()
 }
@@ -78,7 +93,7 @@ func findExistingPanel() string {
 	return ""
 }
 
-func onReady(m *Manager, panelURL string) {
+func onReady(m *Manager, panelURL string, proxy *sysProxy) {
 	systray.SetIcon(iconBytes)
 	systray.SetTitle("XTU")
 	systray.SetTooltip("XTU-Connect 湘潭大学校园网")
@@ -88,6 +103,14 @@ func onReady(m *Manager, panelURL string) {
 	mStatus.Disable()
 	mToggle := systray.AddMenuItem("连接", "连接校园网 VPN")
 	mRestart := systray.AddMenuItem("重新连接", "断开并重新连接")
+	mAutoProxy := systray.AddMenuItem("浏览器直连分流（系统代理）",
+		"连接后自动配置系统 PAC，浏览器无需任何设置即可访问校内网；断开时自动还原")
+	if proxy != nil && proxy.State() != "unsupported" {
+		mAutoProxy.Check()
+	} else {
+		mAutoProxy.Uncheck()
+		mAutoProxy.Disable()
+	}
 	systray.AddSeparator()
 	mPanel := systray.AddMenuItem("控制面板…", "在浏览器中打开控制面板")
 	mLog := systray.AddMenuItem("查看日志…", "打开日志文件")
@@ -136,6 +159,18 @@ func onReady(m *Manager, panelURL string) {
 				}
 			case <-mRestart.ClickedCh:
 				m.Restart()
+			case <-mAutoProxy.ClickedCh:
+				if mAutoProxy.Checked() {
+					mAutoProxy.Uncheck()
+					if proxy != nil {
+						proxy.Restore()
+					}
+				} else {
+					mAutoProxy.Check()
+					if proxy != nil && m.Running() {
+						proxy.Apply()
+					}
+				}
 			case <-mPanel.ClickedCh:
 				if panelURL != "" {
 					openURL(panelURL)
@@ -143,7 +178,7 @@ func onReady(m *Manager, panelURL string) {
 			case <-mLog.ClickedCh:
 				openFile(m.LogPath())
 			case <-mQuit.ClickedCh:
-				quitGracefully(m)
+				quitGracefully(m, proxy)
 				return
 			}
 		}

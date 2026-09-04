@@ -41,14 +41,16 @@ func (s State) Text() string {
 
 // Status 是控制面板与托盘共享的状态快照
 type Status struct {
-	State     State  `json:"state"`
-	StateText string `json:"state_text"`
-	ClientIP  string `json:"client_ip,omitempty"`
-	SocksAddr string `json:"socks_addr,omitempty"`
-	LastError string `json:"last_error,omitempty"`
-	StartedAt int64  `json:"started_at,omitempty"`
-	HasCreds  bool   `json:"has_credentials"`
-	CLIBinary string `json:"cli_binary"`
+	State          State  `json:"state"`
+	StateText      string `json:"state_text"`
+	ClientIP       string `json:"client_ip,omitempty"`
+	SocksAddr      string `json:"socks_addr,omitempty"`
+	LastError      string `json:"last_error,omitempty"`
+	StartedAt      int64  `json:"started_at,omitempty"`
+	HasCreds       bool   `json:"has_credentials"`
+	CLIBinary      string `json:"cli_binary"`
+	SystemProxy    string `json:"system_proxy,omitempty"`     // on/off/conflict/unsupported
+	SystemProxyErr string `json:"system_proxy_err,omitempty"` // conflict 时的原因
 }
 
 const maxLogLines = 500
@@ -68,6 +70,27 @@ type Manager struct {
 	logPath   string
 	logFile   *os.File
 	cliBin    string
+	SysProxy  *sysProxy // 连接成功后自动接管系统代理（浏览器零配置分流）
+}
+
+// setStateLocked 更新状态并在关键跃迁时触发系统代理接管/恢复
+func (m *Manager) setStateLocked(to State) {
+	if m.state == to {
+		return
+	}
+	m.state = to
+	var hook func()
+	if m.SysProxy != nil {
+		switch to {
+		case StateRunning:
+			hook = m.SysProxy.Apply
+		case StateStopped, StateError:
+			hook = m.SysProxy.Restore
+		}
+	}
+	if hook != nil {
+		go hook()
+	}
 }
 
 func NewManager() *Manager {
@@ -170,7 +193,7 @@ func (m *Manager) start() error {
 		debugLog("child wait returned: err=%v pid=%d", err, cmd.Process.Pid)
 		m.mu.Lock()
 		if m.state != StateError {
-			m.state = StateStopped
+			m.setStateLocked(StateStopped)
 		}
 		if err != nil && m.lastErr == "" {
 			m.lastErr = fmt.Sprintf("进程退出: %v", err)
@@ -194,7 +217,7 @@ func debugLog(format string, args ...interface{}) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, time.Now().Format("2006-01-02 15:04:05.000")+" "+fmt.Sprintf(format, args...)+"\n")
+	fmt.Fprintln(f, time.Now().Format("2006-01-02 15:04:05.000")+" "+fmt.Sprintf(format, args...))
 }
 
 var (
@@ -219,17 +242,17 @@ func (m *Manager) pipeLogs(reader io.Reader, logFile *os.File) {
 		}
 		switch {
 		case strings.Contains(line, "Login failed"):
-			m.state = StateError
 			m.lastErr = "登录失败：请检查学号密码（也可能被其他设备的登录挤下线）"
+			m.setStateLocked(StateError)
 		case strings.Contains(line, "VPN client setup error"):
-			m.state = StateError
+			m.setStateLocked(StateError)
 			if m.lastErr == "" {
 				m.lastErr = line
 			}
 		case strings.Contains(line, "SOCKS5 server listening on"):
 			if match := reSocks.FindStringSubmatch(line); match != nil {
 				m.socksAddr = match[1]
-				m.state = StateRunning
+				m.setStateLocked(StateRunning)
 			}
 		case strings.Contains(line, "Client IP:"):
 			if match := reClientIP.FindStringSubmatch(line); match != nil {
@@ -292,6 +315,10 @@ func (m *Manager) Status() Status {
 	s.StateText = s.State.Text()
 	if !m.startedAt.IsZero() && (m.state == StateRunning || m.state == StateStarting) {
 		s.StartedAt = m.startedAt.Unix()
+	}
+	if m.SysProxy != nil {
+		s.SystemProxy = m.SysProxy.State()
+		s.SystemProxyErr = m.SysProxy.lastErrText()
 	}
 	return s
 }

@@ -14,6 +14,21 @@ import (
 //go:embed panel.html
 var panelHTML []byte
 
+// pacScript 是系统「自动代理」使用的分流脚本：
+// 校内域名与内网网段走本地代理，其余流量直连（不影响日常上网与 Clash TUN）
+const pacScript = `// XTU-Connect automatic proxy routing
+function FindProxyForURL(url, host) {
+	host = host.toLowerCase();
+	if (shExpMatch(host, "*.xtu.edu.cn") || host == "xtu.edu.cn")
+		return "PROXY 127.0.0.1:1081; SOCKS5 127.0.0.1:1080";
+	if (isPlainHostName(host)) return "DIRECT";
+	if (isInNet(host, "10.0.0.0", "255.0.0.0") ||
+	    isInNet(host, "172.16.0.0", "255.240.0.0"))
+		return "PROXY 127.0.0.1:1081; SOCKS5 127.0.0.1:1080";
+	return "DIRECT";
+}
+`
+
 // startPanelServer 在 127.0.0.1 上启动控制面板，返回实际访问地址
 func startPanelServer(m *Manager) (string, error) {
 	var listener net.Listener
@@ -73,6 +88,10 @@ func startPanelServer(m *Manager) (string, error) {
 			go m.Restart()
 		}
 		writeJSON(w, map[string]string{"ok": "true"})
+	})
+	mux.HandleFunc("/proxy.pac", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
+		w.Write([]byte(pacScript))
 	})
 	mux.HandleFunc("/api/log", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"lines": m.LogTail(200)})
