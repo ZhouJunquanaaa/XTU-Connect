@@ -1,0 +1,84 @@
+# XTU Connect 配置文件示例
+# 使用方法: ./xtu-connect -config config.toml
+
+protocol = "easyconnect"        # "easyconnect" 或 "atrust"，XTU WebVPN 使用 easyconnect
+server_address = "vpn.xtu.edu.cn"
+server_port = 443
+username = "your_student_id"    # 学号/工号
+password = "your_password"      # 密码（建议保持为空，运行时用 -username/-password 传入）
+disable_xtu_config = false      # true 时不追加 xtu.edu.cn 域名代理规则，完全使用服务端下发规则
+
+# 本地代理监听地址（核心功能：不创建虚拟网卡、不改路由、不动 DNS）
+socks_bind = ":1080"            # SOCKS5 代理
+socks_user = ""                 # SOCKS5 用户名（可选）
+socks_passwd = ""               # SOCKS5 密码（可选）
+http_bind = ":1081"             # HTTP 代理
+shadowsocks_url = ""            # "ss://aes-128-gcm:password@:1082"（可选）
+
+# 其他流量（非内网资源）的出口代理，例如走本机 Clash：
+# dial_direct_proxy = "http://127.0.0.1:7890"
+
+# 隧道侧 DNS（解析内网域名，如 lib.xtu.edu.cn）
+disable_remote_dns = false      # true 则使用本地 DNS（内网域名将无法解析）
+remote_dns_server = "auto"      # auto = 使用服务端下发的内网 DNS
+secondary_dns_server = "auto"   # auto = 114.114.114.114 或服务端下发的备用 DNS
+dns_ttl = 3600
+dns_server_bind = ""            # 例如 "127.0.0.1:53" 暴露本地 DNS 服务器（TUN 模式下自动开启）
+local_dns_server = ""           # 解析 VPN 服务器域名所用的 DNS，如 "223.5.5.5"
+
+# 保活
+disable_keep_alive = false
+keep_alive_url = ""             # 例如 "https://www.baidu.com/favicon.ico"
+
+# 高级模式（一般保持关闭）
+tcp_tunnel_mode = false         # 仅使用 TCP 隧道（禁用 L3 隧道）
+tun_mode = false                # TUN 模式（需要 root，会创建虚拟网卡；与代理软件 TUN 模式可能冲突，慎用）
+add_route = false               # TUN 模式下按服务端规则添加路由
+dns_hijack = false              # TUN 模式下劫持 DNS
+fake_ip = false                 # TUN 模式下启用 Fake IP
+debug_dump = false
+debug_pcap_file = ""            # 抓包调试
+debug_tls_log_file = ""         # TLS 密钥调试
+bind_interface = ""
+auto_detect_interface = false
+
+# 端口转发：把内网服务映射到本地端口
+port_forwarding = [
+#    { network_type = "tcp", bind_address = "127.0.0.1:3389", remote_address = "10.x.x.x:3389" },
+#    { network_type = "udp", bind_address = "127.0.0.1:1053", remote_address = "10.x.x.x:53" },
+]
+
+# 自定义 DNS 记录
+custom_dns = [
+#    { host_name = "lib.xtu.edu.cn", ip = "10.x.x.x" },
+]
+
+# 强制走 VPN 代理的域名（服务端规则之外的手动补充）
+custom_proxy_domain = [
+#    "science.org",
+#    "nature.com"
+]
+
+# EasyConnect 专有设置
+totp_secret = ""
+cert_file = ""
+cert_password = ""
+disable_server_config = false   # true 时不解析服务端配置（分流规则将不可用）
+skip_domain_resource = false
+disable_multi_line = false
+proxy_all = false               # 所有流量都走 VPN（仅调试用）
+twf_id = ""                     # 使用浏览器登录后捕获的 TWFID 登录（免密码方式）
+
+# aTrust 专有设置（XTU 当前为 EasyConnect 协议，无需配置）
+auth_type = "auth/psw"
+login_domain = "Radius"
+client_data_file = "client_data.json"
+graph_code_file = ""
+cas_ticket = ""
+oauth2_code = ""
+phone = ""
+update_best_nodes_interval = 300
+sid = ""
+device_id = ""
+sign_key = ""
+resource_file = ""

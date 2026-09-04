@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  xtu-connect:
+    build:
+      context: .
+    image: xtu-connect
+    container_name: xtu-connect
+    restart: unless-stopped
+    ports:
+      - 1080:1080
+      - 1081:1081
+    volumes:
+      - ./config.toml:/home/nonroot/config.toml

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.xtu.connect</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/xtu-connect</string>
+        <string>-config</string>
+        <string>/etc/xtu-connect/config.toml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/xtu-connect.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/xtu-connect.err.log</string>
+</dict>
+</plist>
