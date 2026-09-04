@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 	tun "github.com/mythologyli/sing-tun"
@@ -59,8 +60,19 @@ func (s *Stack) Run() {
 		s.StartTCPListener()
 	}
 
+	// 建立 L3 数据连接；服务端可能把网关自身 /32 下发为资源路由，
+	// 若未绑定物理网卡会形成路由回环导致拨号超时，这里同时做重试兜底
 	var connErr error
-	s.l3Conn, connErr = s.endpoint.client.NewL3Conn()
+	for attempt := 1; attempt <= 3; attempt++ {
+		s.l3Conn, connErr = s.endpoint.client.NewL3Conn()
+		if connErr == nil {
+			break
+		}
+		log.Printf("Error occurred while creating L3 connection (attempt %d/3): %v", attempt, connErr)
+		if attempt < 3 {
+			time.Sleep(3 * time.Second)
+		}
+	}
 	if connErr != nil {
 		panic(connErr)
 	}

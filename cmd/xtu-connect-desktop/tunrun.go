@@ -22,7 +22,9 @@ LOG=%q
 FLAG=%q
 PIDF=%q
 rm -f "$FLAG"
-"$CLI" -tun-mode -add-route -socks-bind 127.0.0.1:1080 -http-bind "" -dns-server-bind 127.0.0.1:53 >>"$LOG" 2>&1 &
+# -auto-detect-interface: 网关连接绑定物理网卡，
+# 避免服务端下发的网关 /32 路由把到网关的流量引进隧道形成回环
+"$CLI" -tun-mode -add-route -auto-detect-interface -socks-bind 127.0.0.1:1080 -http-bind "" -dns-server-bind 127.0.0.1:53 >>"$LOG" 2>&1 &
 P=$!
 echo $P > "$PIDF"
 # 等待子进程退出或用户创建停止标志文件
