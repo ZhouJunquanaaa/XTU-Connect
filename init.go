@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -28,7 +27,7 @@ import (
 const envPrefix = "XTU_CONNECT_"
 
 var (
-	xtuConnectVersion = "0.1.1"
+	xtuConnectVersion = "0.2.0"
 	CommitID          string
 	domainPattern     = regexp.MustCompile(`^[a-zA-Z\d-]+(\.[a-zA-Z\d-]+)*\.[a-zA-Z]{2,}$`)
 )
@@ -437,36 +436,7 @@ func parseProxyDomains(value string) []string {
 
 // defaultConfigPath 是免参数运行时自动加载/保存凭据的位置
 func defaultConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".config", "xtu-connect", "config.toml")
-}
-
-func tomlQuote(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	return `"` + s + `"`
-}
-
-// saveCredentials 把凭据写入默认配置文件，之后直接运行程序即可自动连接
-func saveCredentials(cfg configs.Config) error {
-	path := defaultConfigPath()
-	if path == "" {
-		return errors.New("cannot determine home directory")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	content := fmt.Sprintf(`protocol = %s
-server_address = %s
-server_port = %d
-username = %s
-password = %s
-`, tomlQuote(cfg.Protocol), tomlQuote(cfg.ServerAddress), cfg.ServerPort,
-		tomlQuote(cfg.Username), tomlQuote(cfg.Password))
-	return os.WriteFile(path, []byte(content), 0o600)
+	return configs.DefaultPath()
 }
 
 // ensureEasyConnectCredentials 在首次裸运行时交互式收集凭据并保存，
@@ -505,7 +475,7 @@ func ensureEasyConnectCredentials(cfg *configs.Config) {
 	if cfg.Username == "" || cfg.Password == "" {
 		return
 	}
-	if err := saveCredentials(*cfg); err != nil {
+	if err := configs.SaveCredentials(*cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "凭据保存失败（下次运行仍需输入）: %v\n", err)
 	} else {
 		fmt.Printf("凭据已保存到 %s（权限 600）。之后直接运行本程序即可自动连接；删除该文件可重新配置。\n", defaultConfigPath())

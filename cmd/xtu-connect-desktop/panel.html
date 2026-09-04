@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>XTU-Connect 控制面板</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; justify-content: center; align-items: flex-start;
+    padding: 40px 16px; background: #0f1420; color: #e6e9f0;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  .card {
+    width: 100%; max-width: 560px; background: #171e2e; border: 1px solid #263046;
+    border-radius: 14px; padding: 24px 28px; box-shadow: 0 8px 40px rgba(0,0,0,.35);
+  }
+  h1 { font-size: 20px; margin: 0 0 18px; display: flex; align-items: center; gap: 10px; }
+  h1 .logo { width: 22px; height: 22px; border-radius: 6px; background: #1e5ac8;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 13px; }
+  .status { display: flex; align-items: center; gap: 10px; font-size: 16px; margin-bottom: 6px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #7a8194; flex: none; }
+  .dot.running { background: #2ecc71; box-shadow: 0 0 8px #2ecc7188; }
+  .dot.starting { background: #f1c40f; box-shadow: 0 0 8px #f1c40f88; }
+  .dot.error { background: #e74c3c; box-shadow: 0 0 8px #e74c3c88; }
+  .detail { color: #8b93a7; font-size: 13px; line-height: 1.7; min-height: 22px;
+    margin-bottom: 18px; white-space: pre-line; word-break: break-all; }
+  .btns { display: flex; gap: 10px; margin-bottom: 20px; }
+  button {
+    flex: 1; padding: 10px 0; border: none; border-radius: 8px; font-size: 14px; cursor: pointer;
+    background: #1e5ac8; color: #fff; transition: filter .15s;
+  }
+  button:hover { filter: brightness(1.15); }
+  button:disabled { background: #2a3348; color: #5b6478; cursor: not-allowed; }
+  button.ghost { background: #263046; color: #c6cddd; }
+  details { border-top: 1px solid #263046; padding: 12px 0 4px; }
+  summary { cursor: pointer; font-size: 14px; color: #aeb6c8; user-select: none; }
+  form { display: flex; gap: 8px; margin: 12px 0 4px; flex-wrap: wrap; }
+  input {
+    flex: 1; min-width: 120px; padding: 9px 12px; border-radius: 8px; border: 1px solid #323d55;
+    background: #0f1420; color: #e6e9f0; font-size: 14px;
+  }
+  input:focus { outline: none; border-color: #1e5ac8; }
+  form button { flex: none; padding: 9px 16px; }
+  .hint { color: #5b6478; font-size: 12px; margin: 6px 0 8px; }
+  pre {
+    background: #0b0f18; border: 1px solid #263046; border-radius: 8px; padding: 12px;
+    font-size: 12px; line-height: 1.55; max-height: 260px; overflow: auto; color: #9aa3b8;
+    white-space: pre-wrap; word-break: break-all; margin: 10px 0 6px;
+  }
+  .msg { font-size: 13px; margin: 8px 0; min-height: 18px; }
+  .msg.ok { color: #2ecc71; } .msg.err { color: #e74c3c; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1><span class="logo">X</span>XTU-Connect <span style="font-size:12px;color:#5b6478;font-weight:400">湘潭大学校园网</span></h1>
+
+  <div class="status"><span class="dot" id="dot"></span><span id="state">加载中…</span></div>
+  <div class="detail" id="detail"></div>
+
+  <div class="btns">
+    <button id="btnStart">连接</button>
+    <button id="btnStop" class="ghost">断开</button>
+    <button id="btnRestart" class="ghost">重连</button>
+  </div>
+
+  <details>
+    <summary>账号设置</summary>
+    <form id="credForm">
+      <input id="username" placeholder="学号/工号" autocomplete="off">
+      <input id="password" type="password" placeholder="密码" autocomplete="new-password">
+      <button type="submit">保存并连接</button>
+    </form>
+    <p class="hint">凭据仅保存在本机 ~/.config/xtu-connect/config.toml（权限 600）</p>
+    <div class="msg" id="credMsg"></div>
+  </details>
+
+  <details>
+    <summary>运行日志</summary>
+    <pre id="log">（暂无日志）</pre>
+  </details>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let curState = '';
+
+async function api(path, body) {
+  const opt = body ? {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {};
+  const r = await fetch(path, opt);
+  return r.json();
+}
+
+function fmtDuration(sec) {
+  const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60), s = Math.floor(sec%60);
+  return h ? `${h}小时${m}分` : m ? `${m}分${s}秒` : `${s}秒`;
+}
+
+async function refresh() {
+  try {
+    const st = await api('/api/status');
+    curState = st.state;
+    $('dot').className = 'dot ' + st.state;
+    $('state').textContent = st.state_text + (st.state==='running' && st.started_at ? `（已运行 ${fmtDuration(Date.now()/1000 - st.started_at)}）` : '');
+    const lines = [];
+    if (st.client_ip) lines.push(`内网 IP：${st.client_ip}`);
+    if (st.socks_addr) lines.push(`SOCKS5 代理：${st.socks_addr}　HTTP 代理：127.0.0.1:1081`);
+    if (st.last_error) lines.push(`错误：${st.last_error}`);
+    if (!lines.length && !st.has_credentials) lines.push('尚未配置凭据，请展开「账号设置」填写学号密码');
+    if (!lines.length && st.cli_binary === '') lines.push('未找到 xtu-connect 主程序，请将它与本程序放在同一目录');
+    $('detail').textContent = lines.join('\n');
+
+    const busy = st.state==='starting';
+    $('btnStart').disabled = busy || st.state==='running' || !st.has_credentials;
+    $('btnStop').disabled = !(st.state==='running' || st.state==='starting');
+    $('btnRestart').disabled = !st.has_credentials;
+  } catch (e) { $('state').textContent = '面板服务不可达'; }
+}
+
+$('btnStart').onclick = async () => { const r = await api('/api/start'); if (r.error) alert(r.error); refresh(); };
+$('btnStop').onclick = async () => { await api('/api/stop'); refresh(); };
+$('btnRestart').onclick = async () => { await api('/api/restart'); refresh(); };
+
+$('credForm').onsubmit = async e => {
+  e.preventDefault();
+  const msg = $('credMsg');
+  msg.className = 'msg'; msg.textContent = '保存中…';
+  const r = await api('/api/credentials', {
+    username: $('username').value.trim(),
+    password: $('password').value,
+  });
+  if (r.ok === 'true') { msg.className='msg ok'; msg.textContent='已保存，正在连接…'; $('password').value=''; }
+  else { msg.className='msg err'; msg.textContent = r.error || '保存失败'; }
+  refresh();
+};
+
+async function refreshLog() {
+  try {
+    const r = await api('/api/log');
+    if (r.lines && r.lines.length) $('log').textContent = r.lines.join('\n');
+  } catch (e) {}
+}
+
+refresh(); refreshLog();
+setInterval(refresh, 2000);
+setInterval(refreshLog, 3000);
+</script>
+</body>
+</html>

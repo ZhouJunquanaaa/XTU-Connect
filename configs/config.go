@@ -1,5 +1,13 @@
 package configs
 
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
 type Config struct {
 	// Common fields
 	Protocol            string                 `koanf:"protocol"`
@@ -85,4 +93,48 @@ func Default() Config {
 		LoginDomain:             "Radius",
 		UpdateBestNodesInterval: 300,
 	}
+}
+
+// DefaultPath 返回免参数运行时自动加载/保存凭据的位置
+func DefaultPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".config", "xtu-connect", "config.toml")
+}
+
+// Exists 报告默认凭据文件是否已存在
+func Exists() bool {
+	path := DefaultPath()
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func tomlQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
+}
+
+// SaveCredentials 把凭据写入默认配置文件，之后直接运行程序即可自动连接
+func SaveCredentials(cfg Config) error {
+	path := DefaultPath()
+	if path == "" {
+		return errors.New("cannot determine home directory")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	content := fmt.Sprintf(`protocol = %s
+server_address = %s
+server_port = %d
+username = %s
+password = %s
+`, tomlQuote(cfg.Protocol), tomlQuote(cfg.ServerAddress), cfg.ServerPort,
+		tomlQuote(cfg.Username), tomlQuote(cfg.Password))
+	return os.WriteFile(path, []byte(content), 0o600)
 }

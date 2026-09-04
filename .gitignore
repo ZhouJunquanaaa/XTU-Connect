@@ -25,3 +25,6 @@ go.work
 config.toml
 # Built binary
 /xtu-connect
+
+# Build output
+dist/

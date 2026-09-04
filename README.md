@@ -25,7 +25,23 @@
 
 从 Release 页面下载对应平台的可执行文件，或自行编译（见下文）。
 
-### 2. 直接运行（推荐，零配置）
+两种形态：
+
+- **桌面版**（推荐普通用户）：macOS 下载 `XTU-Connect_<版本>_macos-arm64.zip`（Intel 机选 amd64），解压得到 `XTU-Connect.app` 拖入「应用程序」，双击运行后常驻菜单栏；Windows 下载 `xtu-connect-desktop_*.exe`（需与同目录的 `xtu-connect_*.exe` 配套，重命名为 `xtu-connect.exe`）
+- **命令行版**：单个可执行文件，适合服务器 / 脚本 / Docker
+
+### 2. 桌面版使用（GUI）
+
+双击启动后常驻系统托盘（macOS 菜单栏），**启动即自动连接**：
+
+- 托盘菜单：状态显示（含内网 IP）、连接/断开、重新连接、控制面板、查看日志、退出
+- 控制面板（浏览器打开 `http://127.0.0.1:58081`）：状态卡片、连接控制、账号设置（首次运行会自动弹出）、实时日志
+- GUI 只负责托盘和控制面板，实际 VPN 由同目录的 `xtu-connect` CLI 子进程完成，退出时自动优雅断开
+- 日志位置：`~/.config/xtu-connect/desktop.log`
+
+> macOS 提示：应用未做开发者签名分发，若 Gatekeeper 拦截，右键点 App 选「打开」。首选项「登录时启动」可用系统设置里的「登录项」把 XTU-Connect.app 加入实现。
+
+### 3. 命令行直接运行（推荐，零配置）
 
 ```bash
 ./xtu-connect
@@ -143,26 +159,45 @@ port_forwarding = [
 
 ## 编译
 
-需要 Go 1.25+：
+完整编译流程已固化为脚本（这是 Release 产物的唯一构建入口）：
 
 ```bash
-# 当前平台
-go build -o xtu-connect .
+# 一键全平台编译：CLI×5 + 桌面版×5 + macOS .app×2 + checksums，输出到 dist/
+./scripts/build.sh              # 版本号自动取 git tag，无 tag 则用日期
+./scripts/build.sh --version 0.2.0
 
-# 交叉编译
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o xtu-connect.exe .
-CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -o xtu-connect-linux .
-CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o xtu-connect-mac .
-
-# 跑测试
-go test ./...
+# 等价入口
+make build    # = scripts/build.sh
+make test     # go test ./...
+make clean    # 清理 dist/
 ```
 
-发布时注入版本号：
+编译目标矩阵：
+
+| 产物 | 平台 | 说明 |
+|---|---|---|
+| xtu-connect | darwin/arm64+amd64, windows/amd64, linux/amd64+arm64 | 纯 Go，CGO 关闭，随处可交叉编译 |
+| xtu-connect-desktop | 同上 + darwin 双架构 | Windows/Linux 纯 Go；**macOS 托盘依赖 Cocoa(cgo)，须在 macOS 本机编译** |
+| XTU-Connect.app | macos arm64/amd64 | 含 GUI+CLI 双二进制、Info.plist、icns 图标、adhoc 签名，zip 打包 |
+
+CI/发布流水线（`.github/workflows/`）：
+
+- `ci.yml`：push/PR 时在 ubuntu/macos/windows 三平台跑 vet + test + build
+- `release.yml`：推送 `v*` 标签时在 macOS runner 上执行 `scripts/build.sh` 全量构建并自动创建 GitHub Release（附全部产物与校验和）：
 
 ```bash
-go build -ldflags "-X main.xtuConnectVersion=0.1.0" -o xtu-connect .
+git tag v0.2.0 && git push origin v0.2.0   # 触发自动发布
 ```
+
+手动构建单个目标：
+
+```bash
+go build -o xtu-connect .                                    # CLI（当前平台）
+go build -o xtu-connect-desktop ./cmd/xtu-connect-desktop   # GUI（macOS 需本机）
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o xtu-connect-desktop.exe ./cmd/xtu-connect-desktop
+```
+
+> 注意：macOS 应用包内 GUI 与 CLI 文件名分别为 `xtu-connect-desktop` 与 `xtu-connect`——macOS 文件系统大小写不敏感，不能命名为 `XTU-Connect`/`xtu-connect` 这种仅大小写差异的对，会互相覆盖。
 
 ## 工作原理
 
