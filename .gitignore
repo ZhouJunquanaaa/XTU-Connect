@@ -23,3 +23,5 @@ go.work
 
 # Config file
 config.toml
+# Built binary
+/xtu-connect
