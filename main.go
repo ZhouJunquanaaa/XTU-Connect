@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -118,6 +119,9 @@ func main() {
 		log.Printf("VPN protocol: %s", conf.Protocol)
 		err := vpnClient.(*easyconnectclient.Client).Setup()
 		if err != nil {
+			if strings.Contains(err.Error(), "Login failed") && defaultConfigPath() != "" {
+				log.Printf("登录失败。若保存的凭据已变更，删除 %s 后重新运行，或用 -username/-password 覆盖", defaultConfigPath())
+			}
 			vpnClient.(*easyconnectclient.Client).Close()
 			_ = underlayDialer.Close()
 			if tlsKeyLogWriter != nil {

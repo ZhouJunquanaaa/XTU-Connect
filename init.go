@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -16,15 +18,17 @@ import (
 	"github.com/knadh/koanf/providers/posflag"
 	"github.com/knadh/koanf/providers/structs"
 	"github.com/knadh/koanf/v2"
+	"github.com/spf13/pflag"
+	"golang.org/x/term"
+
 	"xtu-connect/client/atrust"
 	"xtu-connect/configs"
-	"github.com/spf13/pflag"
 )
 
 const envPrefix = "XTU_CONNECT_"
 
 var (
-	xtuConnectVersion = "0.1.0"
+	xtuConnectVersion = "0.1.1"
 	CommitID          string
 	domainPattern     = regexp.MustCompile(`^[a-zA-Z\d-]+(\.[a-zA-Z\d-]+)*\.[a-zA-Z]{2,}$`)
 )
@@ -158,6 +162,14 @@ func loadStartupOptions(args []string, environ func() []string) (startupOptions,
 	if !flags.Lookup("config").Changed {
 		if path, ok := lookupEnvironment(envValues, envPrefix+"CONFIG"); ok {
 			configFile = path
+		}
+	}
+	if configFile == "" {
+		// 直接运行（无 -config）时自动加载默认路径的已保存凭据
+		if path := defaultConfigPath(); path != "" {
+			if _, err := os.Stat(path); err == nil {
+				configFile = path
+			}
 		}
 	}
 
@@ -423,6 +435,92 @@ func parseProxyDomains(value string) []string {
 	return strings.Split(value, ",")
 }
 
+// defaultConfigPath 是免参数运行时自动加载/保存凭据的位置
+func defaultConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".config", "xtu-connect", "config.toml")
+}
+
+func tomlQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
+}
+
+// saveCredentials 把凭据写入默认配置文件，之后直接运行程序即可自动连接
+func saveCredentials(cfg configs.Config) error {
+	path := defaultConfigPath()
+	if path == "" {
+		return errors.New("cannot determine home directory")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	content := fmt.Sprintf(`protocol = %s
+server_address = %s
+server_port = %d
+username = %s
+password = %s
+`, tomlQuote(cfg.Protocol), tomlQuote(cfg.ServerAddress), cfg.ServerPort,
+		tomlQuote(cfg.Username), tomlQuote(cfg.Password))
+	return os.WriteFile(path, []byte(content), 0o600)
+}
+
+// ensureEasyConnectCredentials 在首次裸运行时交互式收集凭据并保存，
+// 让后续启动不需要任何参数或配置步骤
+func ensureEasyConnectCredentials(cfg *configs.Config) {
+	if cfg.Protocol != "easyconnect" || cfg.TwfID != "" {
+		return
+	}
+	if cfg.Username != "" && cfg.Password != "" {
+		return
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) && !stdinHasData() {
+		return
+	}
+
+	fmt.Println("首次运行：尚未配置校园网凭据")
+	reader := bufio.NewReader(os.Stdin)
+	if cfg.Username == "" {
+		fmt.Print("学号/工号: ")
+		line, _ := reader.ReadString('\n')
+		cfg.Username = strings.TrimSpace(line)
+	}
+	if cfg.Password == "" {
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			fmt.Print("密码（输入不回显）: ")
+			if secret, err := term.ReadPassword(int(os.Stdin.Fd())); err == nil {
+				cfg.Password = string(secret)
+			}
+			fmt.Println()
+		} else {
+			fmt.Print("密码: ")
+			line, _ := reader.ReadString('\n')
+			cfg.Password = strings.TrimRight(line, "\r\n")
+		}
+	}
+	if cfg.Username == "" || cfg.Password == "" {
+		return
+	}
+	if err := saveCredentials(*cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "凭据保存失败（下次运行仍需输入）: %v\n", err)
+	} else {
+		fmt.Printf("凭据已保存到 %s（权限 600）。之后直接运行本程序即可自动连接；删除该文件可重新配置。\n", defaultConfigPath())
+	}
+}
+
+// stdinHasData 判断标准输入里是否已有排队的数据（支持管道/脚本喂数）
+func stdinHasData() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return stat.Mode()&os.ModeCharDevice == 0 && stat.Size() > 0
+}
+
 func validateConfig(cfg configs.Config) error {
 	if cfg.Protocol != "easyconnect" && cfg.Protocol != "atrust" {
 		return fmt.Errorf("unsupported VPN protocol: %s", cfg.Protocol)
@@ -497,6 +595,7 @@ func initialize(args []string) int {
 	}
 
 	conf = options.Config
+	ensureEasyConnectCredentials(&conf)
 	if options.AuthInfo {
 		if conf.Protocol != "atrust" {
 			fmt.Fprintln(os.Stderr, "Auth info is only supported by the atrust protocol")

@@ -25,29 +25,50 @@
 
 从 Release 页面下载对应平台的可执行文件，或自行编译（见下文）。
 
-### 2. 命令行运行
+### 2. 直接运行（推荐，零配置）
 
 ```bash
-# 最简运行（服务器默认 vpn.xtu.edu.cn）
-./xtu-connect -username 你的学号 -password 你的密码
-
-# 指定代理端口 + 关闭除 1080 端口外的服务
-./xtu-connect -username 你的学号 -password 你的密码 -socks-bind 127.0.0.1:1080 -http-bind ""
+./xtu-connect
 ```
 
-登录成功后，本地 `127.0.0.1:1080` 即为 SOCKS5 代理，`127.0.0.1:1081` 为 HTTP 代理。
+首次运行会交互式询问学号和密码（密码输入不回显），自动保存到 `~/.config/xtu-connect/config.toml`（权限 600）。**之后每次直接运行即可自动连接**，无需任何参数；删除该文件可重新配置。
 
-### 3. 配置文件运行
+连接就绪后，本地 `127.0.0.1:1080` 为 SOCKS5 代理，`127.0.0.1:1081` 为 HTTP 代理。
+
+> 注意：学校 VPN 服务端为单会话策略，同一账号同时只能有一个在线客户端（包括浏览器 WebVPN 登录和官方 EasyConnect），重复登录会互相挤下线。
+
+### 3. 一次性配置 SSH 直连内网
+
+在 `~/.ssh/config` 中加入（macOS/Linux 自带 nc 支持）：
+
+```
+Host 172.16.* 172.24.* 172.25.*
+    ProxyCommand nc -X 5 -x 127.0.0.1:1080 %h %p
+```
+
+之后 `ssh user@172.16.x.x`、`scp`、VS Code Remote-SSH 全部自动走 VPN，无需其他操作。
+
+### 4. 命令行运行（显式参数）
+
+```bash
+# 显式传入凭据（不保存，服务器默认 vpn.xtu.edu.cn）
+./xtu-connect -username 你的学号 -password 你的密码
+
+# 覆盖已保存的凭据/端口
+./xtu-connect -username 你的学号 -password 新密码 -socks-bind 127.0.0.1:1080 -http-bind ""
+```
+
+### 5. 配置文件运行（进阶）
 
 ```bash
 cp config.toml.example config.toml
-# 编辑 config.toml 填入账号密码
+# 编辑 config.toml 填入账号密码等
 ./xtu-connect -config config.toml
 ```
 
-也支持环境变量（前缀 `XTU_CONNECT_`），详见 `--help`。
+也支持环境变量（前缀 `XTU_CONNECT_`），详见 `--help`。未指定 `-config` 时会自动加载 `~/.config/xtu-connect/config.toml`。
 
-### 4. 使用代理访问校内资源
+### 6. 使用代理访问校内资源
 
 浏览器（推荐配 [SwitchyOmega](https://github.com/FelisCatus/SwitchyOmega)）或任意支持代理的程序指向 `127.0.0.1:1080` 即可。命令行程序示例：
 
