@@ -56,6 +56,7 @@ const maxLogLines = 500
 // Manager 管理 xtu-connect CLI 子进程的完整生命周期
 type Manager struct {
 	mu        sync.Mutex
+	actionMu  sync.Mutex // 串行化 Start/Stop/Restart，防止并发操作互相踩踏
 	cmd       *exec.Cmd
 	done      chan struct{}
 	state     State
@@ -107,7 +108,14 @@ func isExecutable(path string) bool {
 	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
+// Start 启动 VPN（与其他生命周期操作互斥）
 func (m *Manager) Start() error {
+	m.actionMu.Lock()
+	defer m.actionMu.Unlock()
+	return m.start()
+}
+
+func (m *Manager) start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -234,6 +242,12 @@ func (m *Manager) pipeLogs(reader io.Reader, logFile *os.File) {
 
 // Stop 优雅停止子进程（SIGTERM，Windows 下直接 Kill），超时后强杀；幂等可重复调用
 func (m *Manager) Stop() {
+	m.actionMu.Lock()
+	defer m.actionMu.Unlock()
+	m.stop()
+}
+
+func (m *Manager) stop() {
 	m.mu.Lock()
 	cmd, done := m.cmd, m.done
 	m.cmd = nil
@@ -256,10 +270,12 @@ func (m *Manager) Stop() {
 }
 
 func (m *Manager) Restart() {
-	m.Stop()
-	// 给服务端一点时间释放旧会话（单会话策略）
-	time.Sleep(time.Second)
-	_ = m.Start()
+	m.actionMu.Lock()
+	defer m.actionMu.Unlock()
+	m.stop()
+	// 给服务端时间释放旧会话（单会话策略：同账号同时只允许一个在线客户端）
+	time.Sleep(2 * time.Second)
+	_ = m.start()
 }
 
 func (m *Manager) Status() Status {

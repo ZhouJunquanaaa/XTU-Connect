@@ -3,10 +3,13 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,9 +20,17 @@ import (
 //go:embed icon.png
 var iconBytes []byte
 
-var desktopVersion = "0.2.0"
+var desktopVersion = "0.2.1"
 
 func main() {
+	// 单实例保护：已有实例在运行时，唤起它的控制面板并退出，
+	// 避免多个托盘/面板并存导致状态互相矛盾、以及服务端单会话互踢
+	if existing := findExistingPanel(); existing != "" {
+		fmt.Println("XTU-Connect 已在运行，打开控制面板:", existing)
+		openURL(existing)
+		os.Exit(0)
+	}
+
 	manager := NewManager()
 
 	panelURL, err := startPanelServer(manager)
@@ -47,6 +58,24 @@ func quitGracefully(manager *Manager) {
 		manager.Stop()
 		systray.Quit()
 	}()
+}
+
+// findExistingPanel 探测本机是否已有 XTU-Connect 桌面实例（扫描面板端口段）
+func findExistingPanel() string {
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	for port := 58081; port <= 58090; port++ {
+		url := fmt.Sprintf("http://127.0.0.1:%d/api/status", port)
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK && strings.Contains(string(body), `"state"`) {
+			return fmt.Sprintf("http://127.0.0.1:%d", port)
+		}
+	}
+	return ""
 }
 
 func onReady(m *Manager, panelURL string) {
