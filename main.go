@@ -1,5 +1,3 @@
-//go:build !tun
-
 package main
 
 import (
@@ -30,10 +28,8 @@ import (
 	"xtu-connect/stack"
 	"xtu-connect/stack/gvisor"
 	"xtu-connect/stack/tcptunnel"
-	"xtu-connect/stack/tun"
 	"xtu-connect/underlay"
 	"golang.org/x/crypto/pkcs12"
-	"inet.af/netaddr"
 )
 
 var conf configs.Config
@@ -226,11 +222,6 @@ func main() {
 		log.Println("No IP resources")
 	}
 
-	ipSet, err := vpnClient.IPSet()
-	if err != nil && !conf.DisableServerConfig {
-		log.Println("No IP set")
-	}
-
 	domainResources, err := vpnClient.DomainResources()
 	if err != nil && !conf.DisableServerConfig {
 		log.Println("No domain resources")
@@ -275,14 +266,6 @@ func main() {
 					Protocol: "all",
 				},
 			}, ipResources...)
-
-			ipSetBuilder := netaddr.IPSetBuilder{}
-			if ipSet != nil {
-				ipSetBuilder.AddSet(ipSet)
-			}
-			ipSetBuilder.AddPrefix(netaddr.MustParseIPPrefix("10.0.0.0/8"))
-			ipSetBuilder.AddPrefix(netaddr.MustParseIPPrefix("172.16.0.0/12"))
-			ipSet, _ = ipSetBuilder.IPSet()
 		}
 
 		for _, customProxyDomain := range conf.CustomProxyDomain {
@@ -310,27 +293,6 @@ func main() {
 		if err != nil {
 			log.Fatalf("TCP Tunnel stack setup error: %s", err)
 		}
-	} else if conf.TUNMode {
-		vpnTUNStack, err := tun.NewStack(vpnClient, conf.DNSHijack, conf.FakeIP, ipResources)
-		if err != nil {
-			log.Fatalf("Tun stack setup error, make sure you are root user : %s", err)
-		}
-
-		if conf.AddRoute && ipSet != nil {
-			for _, prefix := range ipSet.Prefixes() {
-				log.Printf("Add route to %s", prefix.String())
-				_ = vpnTUNStack.AddRoute(prefix.String())
-			}
-		} else if !conf.AddRoute && !conf.DisableXTUConfig && conf.Protocol == "easyconnect" {
-			log.Println("Add route to 10.0.0.0/8")
-			_ = vpnTUNStack.AddRoute("10.0.0.0/8")
-		}
-
-		if conf.FakeIP {
-			_ = vpnTUNStack.AddRoute("198.18.0.0/16")
-		}
-
-		vpnStack = vpnTUNStack
 	} else {
 		vpnStack, err = gvisor.NewStack(vpnClient)
 		if err != nil {
@@ -392,10 +354,6 @@ func main() {
 
 	if conf.DNSServerBind != "" {
 		go service.ServeDNS(conf.DNSServerBind, localResolver)
-	}
-	if conf.TUNMode {
-		clientIP, _ := vpnClient.IP()
-		go service.ServeDNS(clientIP.String()+":53", localResolver)
 	}
 
 	if conf.SocksBind != "" {

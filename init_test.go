@@ -12,13 +12,12 @@ protocol = "atrust"
 server_address = "file.example.com"
 server_port = 444
 username = "file-user"
-tun_mode = true
 `)
 
 	options, _, err := loadStartupOptions([]string{
 		"--config", configFile,
 		"--server", "cli.example.com",
-		"--tun-mode=false",
+		"--proxy-all=false",
 	}, func() []string {
 		return []string{
 			"XTU_CONNECT_SERVER_ADDRESS=env.example.com",
@@ -43,8 +42,8 @@ tun_mode = true
 	if cfg.Protocol != "atrust" {
 		t.Fatalf("Protocol = %q, want TOML value", cfg.Protocol)
 	}
-	if cfg.TUNMode {
-		t.Fatal("TUNMode = true, want explicit CLI false")
+	if cfg.ProxyAll {
+		t.Fatal("ProxyAll = true, want explicit CLI false")
 	}
 }
 
@@ -52,14 +51,14 @@ func TestLegacySingleDashFlagsRemainSupported(t *testing.T) {
 	options, _, err := loadStartupOptions([]string{
 		"-protocol", "atrust",
 		"-server=legacy.example.com",
-		"-tun-mode",
+		"-proxy-all",
 	}, func() []string { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	if options.Config.Protocol != "atrust" ||
 		options.Config.ServerAddress != "legacy.example.com" ||
-		!options.Config.TUNMode {
+		!options.Config.ProxyAll {
 		t.Fatalf("legacy flags were not applied: %+v", options.Config)
 	}
 }

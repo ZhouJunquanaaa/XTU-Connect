@@ -34,11 +34,7 @@ type Config struct {
 	DisableKeepAlive    bool                   `koanf:"disable_keep_alive"`
 	KeepAliveURL        string                 `koanf:"keep_alive_url"`
 	TCPTunnelMode       bool                   `koanf:"tcp_tunnel_mode"`
-	TUNMode             bool                   `koanf:"tun_mode"`
-	AddRoute            bool                   `koanf:"add_route"`
-	DNSHijack           bool                   `koanf:"dns_hijack"`
 	ProxyAll            bool                   `koanf:"proxy_all"`
-	FakeIP              bool                   `koanf:"fake_ip"`
 	GraphCodeFile       string                 `koanf:"graph_code_file"`
 	DebugDump           bool                   `koanf:"debug_dump"`
 	DebugPCAPFile       string                 `koanf:"debug_pcap_file"`

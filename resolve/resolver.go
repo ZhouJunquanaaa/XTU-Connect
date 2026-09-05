@@ -67,7 +67,6 @@ func (r *Resolver) coordinationEntryCount() int {
 type contextKey string
 
 var (
-	ContextKeyFakeIP         = contextKey("FAKE_IP")
 	ContextKeyResolveHost    = contextKey("RESOLVE_HOST")
 	ContextKeyDomainResource = contextKey("DOMAIN_RESOURCE")
 	ContextKeyIPResource     = contextKey("IP_RESOURCE")
@@ -118,14 +117,6 @@ func (r *Resolver) Resolve(ctx context.Context, host string) (resCtx context.Con
 				}
 			}
 			return ctx, ip, nil
-		}
-
-		if fakeIPValue := ctx.Value(ContextKeyFakeIP); fakeIPValue != nil {
-			if domainResourceFound {
-				ip := r.IPPool.GenerateIP(host, domainResources)
-				log.Printf("%s -> %s (Fake IP)", host, ip.String())
-				return ctx, ip, nil
-			}
 		}
 	}
 

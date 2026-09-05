@@ -18,7 +18,7 @@
 - TCP/UDP 端口转发：把内网服务映射到本地端口
 - 服务端资源列表自动解析，按校内规则分流（内网走 VPN，其余直连）
 - 支持 Windows / macOS / Linux（含 ARM）
-- 命令行版可选 TUN 模式与 TCP 隧道模式（实验性，桌面版未启用）
+- 命令行版可选 TCP 隧道模式（实验性，桌面版未启用）
 
 ## 快速开始
 
@@ -235,7 +235,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o xtu
                    vpn.xtu.edu.cn 网关 ──▶ 校内网络
 ```
 
-全程不触碰系统网络栈（除非在命令行版显式开启 `tun_mode`），这是与 EasyConnect 客户端的本质区别，也是不与代理软件冲突的原因。
+全程不触碰系统网络栈，这是与 EasyConnect 客户端的本质区别，也是不与代理软件冲突的原因。
 
 ## 已知限制
 
