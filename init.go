@@ -27,7 +27,7 @@ import (
 const envPrefix = "XTU_CONNECT_"
 
 var (
-	xtuConnectVersion = "0.4.1"
+	xtuConnectVersion = "0.6.0"
 	CommitID          string
 	domainPattern     = regexp.MustCompile(`^[a-zA-Z\d-]+(\.[a-zA-Z\d-]+)*\.[a-zA-Z]{2,}$`)
 )

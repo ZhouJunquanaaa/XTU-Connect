@@ -20,7 +20,7 @@ import (
 //go:embed icon.png
 var iconBytes []byte
 
-var desktopVersion = "0.4.1"
+var desktopVersion = "0.6.0"
 
 func main() {
 	// 单实例保护：已有实例在运行时，唤起它的控制面板并退出，
@@ -32,24 +32,28 @@ func main() {
 	}
 
 	manager := NewManager()
-	// 默认整机分流：SSH/VS Code/浏览器等零配置透明访问（Windows 暂仅代理模式）
-	if runtime.GOOS != "windows" {
-		manager.SetTunMode(true)
-	}
-	dns := newSysDNS()
-	manager.SysDNS = dns
+	proxy := newSysProxy()
+	sshCfg := newSSHConfig() // 构造时顺带清理上次异常退出遗留的托管块
+	manager.SSHConfig = sshCfg
 
-	panelURL, err := startPanelServer(manager)
+	// 账号簿：首次升级时把当前已保存的账号自动收录，保证原账号可一键切回
+	if book, err := configs.OpenAccountBook(); err != nil {
+		fmt.Println("账号簿初始化失败:", err)
+	} else {
+		if u, p := configs.SavedUsername(), configs.SavedPassword(); len(book.List()) == 0 && u != "" && p != "" {
+			_ = book.Add(u, p)
+		}
+		manager.AccountBook = book
+	}
+
+	// 面板服务先行，拿到 PAC 地址后交给 sysProxy（顺带清理上次遗留）
+	panelURL, err := startPanelServer(manager, proxy)
 	if err != nil {
 		fmt.Println("控制面板启动失败:", err)
+	} else {
+		proxy.SetPacURL(panelURL + "/proxy.pac")
 	}
-
-	// 代理模式的系统 PAC（整机模式下不启用）
-	var proxy *sysProxy
-	if panelURL != "" {
-		proxy = newSysProxy(panelURL + "/proxy.pac")
-		manager.SysProxy = proxy
-	}
+	manager.SysProxy = proxy
 
 	// 终端信号也走优雅退出：先停子进程再退托盘，不依赖 systray 的 onExit 时序
 	// SIGHUP 覆盖终端关闭/父进程退出的场景，避免遗留子进程与系统代理设置
@@ -57,28 +61,24 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, os.Interrupt)
 	go func() {
 		<-sigCh
-		quitGracefully(manager, proxy, dns)
+		quitGracefully(manager, proxy, sshCfg)
 	}()
 
-	systray.Run(func() { onReady(manager, panelURL, proxy, dns) }, func() {
+	systray.Run(func() { onReady(manager, panelURL, proxy, sshCfg) }, func() {
 		// 兜底：systray 退出回调（幂等，同步执行确保来得及）
 		manager.Stop()
-		if proxy != nil {
-			proxy.Restore()
-		}
-		dns.Restore()
+		proxy.Restore()
+		sshCfg.Remove()
 	})
 }
 
-// quitGracefully 同步地：断开 VPN → 恢复系统代理/DNS → 结束托盘循环。
+// quitGracefully 同步地：断开 VPN → 恢复系统代理/SSH 规则 → 结束托盘循环。
 // 恢复必须同步完成，否则进程可能在系统命令执行完前退出，遗留系统设置
-func quitGracefully(manager *Manager, proxy *sysProxy, dns *sysDNS) {
+func quitGracefully(manager *Manager, proxy *sysProxy, sshCfg *sshConfig) {
 	go func() {
 		manager.Stop()
-		if proxy != nil {
-			proxy.Restore()
-		}
-		dns.Restore()
+		proxy.Restore()
+		sshCfg.Remove()
 		systray.Quit()
 	}()
 }
@@ -101,27 +101,23 @@ func findExistingPanel() string {
 	return ""
 }
 
-func onReady(m *Manager, panelURL string, proxy *sysProxy, dns *sysDNS) {
-	systray.SetIcon(iconBytes)
-	systray.SetTitle("XTU")
-	systray.SetTooltip("XTU-Connect 湘潭大学校园网")
-	systray.SetTemplateIcon(iconBytes, iconBytes)
+func onReady(m *Manager, panelURL string, proxy *sysProxy, sshCfg *sshConfig) {
+	// Windows/Linux 托盘不显示标题文字，必须保留图标；
+	// macOS 菜单栏用纯文字「VXTU」——彩色应用图标在菜单栏里是突兀的色块
+	if runtime.GOOS != "darwin" {
+		systray.SetIcon(iconBytes)
+		systray.SetTemplateIcon(iconBytes, iconBytes)
+	}
+	systray.SetTitle("VXTU")
+	systray.SetTooltip("VXTU-Connect 湘潭大学校园网")
 
 	mStatus := systray.AddMenuItem("状态：加载中", "当前连接状态")
 	mStatus.Disable()
 	mToggle := systray.AddMenuItem("连接", "连接校园网 VPN")
 	mRestart := systray.AddMenuItem("重新连接", "断开并重新连接")
-	mWholeMachine := systray.AddMenuItem("整机分流模式",
-		"开启后 SSH / VS Code / 浏览器等所有程序零配置直访校内网（需要管理员权限，连接时会弹一次密码框）；关闭则使用系统代理分流（仅浏览器）")
-	if runtime.GOOS == "windows" {
-		mWholeMachine.Uncheck()
-		mWholeMachine.Disable()
-	} else {
-		mWholeMachine.Check()
-	}
-	mAutoProxy := systray.AddMenuItem("浏览器直连分流（系统代理）",
-		"代理模式下连接后自动配置系统 PAC，浏览器无需任何设置即可访问校内网；断开时自动还原")
-	if proxy != nil && proxy.State() != "unsupported" {
+	mAutoProxy := systray.AddMenuItem("浏览器分流（系统代理）",
+		"连接后自动配置系统 PAC：校内网走本程序，其余流量直连或链到已有系统代理（与 Clash TUN/系统代理模式共存）；断开时自动还原")
+	if proxy.State() != "unsupported" {
 		mAutoProxy.Check()
 	} else {
 		mAutoProxy.Uncheck()
@@ -149,11 +145,7 @@ func onReady(m *Manager, panelURL string, proxy *sysProxy, dns *sysDNS) {
 	go func() {
 		for {
 			st := m.Status()
-			modeText := "整机"
-			if st.Mode == "proxy" {
-				modeText = "代理"
-			}
-			systray.SetTooltip("XTU-Connect（" + st.StateText + "·" + modeText + "）")
+			systray.SetTooltip("VXTU-Connect（" + st.StateText + "·代理分流）")
 			title := "状态：" + st.StateText
 			if st.ClientIP != "" {
 				title += " " + st.ClientIP
@@ -180,26 +172,13 @@ func onReady(m *Manager, panelURL string, proxy *sysProxy, dns *sysDNS) {
 				}
 			case <-mRestart.ClickedCh:
 				m.Restart()
-			case <-mWholeMachine.ClickedCh:
-				if mWholeMachine.Checked() {
-					mWholeMachine.Uncheck()
-					m.SetTunMode(false)
-				} else {
-					mWholeMachine.Check()
-					m.SetTunMode(true)
-				}
-				if m.Running() {
-					m.Restart() // 切换模式后重连生效
-				}
 			case <-mAutoProxy.ClickedCh:
 				if mAutoProxy.Checked() {
 					mAutoProxy.Uncheck()
-					if proxy != nil {
-						proxy.Restore()
-					}
+					proxy.Restore()
 				} else {
 					mAutoProxy.Check()
-					if proxy != nil && m.Running() {
+					if m.Running() {
 						proxy.Apply()
 					}
 				}
@@ -210,7 +189,7 @@ func onReady(m *Manager, panelURL string, proxy *sysProxy, dns *sysDNS) {
 			case <-mLog.ClickedCh:
 				openFile(m.LogPath())
 			case <-mQuit.ClickedCh:
-				quitGracefully(m, proxy, dns)
+				quitGracefully(m, proxy, sshCfg)
 				return
 			}
 		}

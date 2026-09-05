@@ -7,7 +7,9 @@ func readWindowsAutoConfig() (url string, existed bool, enabled bool, err error)
 	return "", false, false, nil
 }
 
-func readWindowsProxyEnable() (bool, error) { return false, nil }
+func readWindowsManualProxy() (enabled bool, server string, err error) {
+	return false, "", nil
+}
 
 func writeWindowsAutoConfig(string) error { return nil }
 

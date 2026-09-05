@@ -28,3 +28,6 @@ config.toml
 
 # Build output
 dist/
+
+# macOS
+.DS_Store

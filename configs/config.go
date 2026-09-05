@@ -114,6 +114,34 @@ func Exists() bool {
 	return err == nil
 }
 
+// SavedUsername 从默认配置文件读取已保存的登录账号；无则返回空串
+func SavedUsername() string { return savedField("username") }
+
+// SavedPassword 从默认配置文件读取已保存的密码；无则返回空串
+func SavedPassword() string { return savedField("password") }
+
+func savedField(name string) string {
+	path := DefaultPath()
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, name) {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(line, name))
+		rest = strings.TrimSpace(strings.TrimPrefix(rest, "="))
+		rest = strings.TrimSpace(strings.Trim(rest, `"`))
+		return strings.ReplaceAll(strings.ReplaceAll(rest, `\"`, `"`), `\\`, `\`)
+	}
+	return ""
+}
+
 func tomlQuote(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)

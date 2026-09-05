@@ -27,14 +27,26 @@ func readWindowsAutoConfig() (url string, existed bool, enabled bool, err error)
 	return url, true, url != "", nil
 }
 
-func readWindowsProxyEnable() (bool, error) {
+// readWindowsManualProxy 返回手动代理的启用状态与 ProxyServer 原始值
+// （格式为 "host:port" 或 "http=...;https=...;ftp=...;socks=..."）
+func readWindowsManualProxy() (enabled bool, server string, err error) {
 	k, err := registry.OpenKey(registry.CURRENT_USER, winInetKey, registry.QUERY_VALUE)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer k.Close()
 	v, _, err := k.GetIntegerValue("ProxyEnable")
-	return v != 0, err
+	if err != nil {
+		return false, "", err
+	}
+	server, _, err = k.GetStringValue("ProxyServer")
+	if err != nil {
+		if err == syscall.ERROR_FILE_NOT_FOUND {
+			return v != 0, "", nil
+		}
+		return v != 0, "", err
+	}
+	return v != 0, server, nil
 }
 
 func writeWindowsAutoConfig(url string) error {
@@ -55,8 +67,6 @@ func restoreWindowsAutoConfig(backupURL string, hadBackup bool) {
 	switch {
 	case hadBackup && backupURL != "":
 		_ = k.SetStringValue("AutoConfigURL", backupURL)
-	case hadBackup:
-		_ = k.DeleteValue("AutoConfigURL")
 	default:
 		_ = k.DeleteValue("AutoConfigURL")
 	}

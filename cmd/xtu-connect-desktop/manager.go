@@ -41,70 +41,69 @@ func (s State) Text() string {
 
 // Status 是控制面板与托盘共享的状态快照
 type Status struct {
-	State          State  `json:"state"`
-	StateText      string `json:"state_text"`
-	Mode           string `json:"mode"` // tun=整机分流 / proxy=代理模式
-	ClientIP       string `json:"client_ip,omitempty"`
-	SocksAddr      string `json:"socks_addr,omitempty"`
-	LastError      string `json:"last_error,omitempty"`
-	StartedAt      int64  `json:"started_at,omitempty"`
-	HasCreds       bool   `json:"has_credentials"`
-	CLIBinary      string `json:"cli_binary"`
-	SystemProxy    string `json:"system_proxy,omitempty"`     // on/off/conflict/unsupported
-	SystemProxyErr string `json:"system_proxy_err,omitempty"` // conflict 时的原因
+	State            State    `json:"state"`
+	StateText        string   `json:"state_text"`
+	Mode             string   `json:"mode"` // 代理分流（系统 PAC）
+	ClientIP         string   `json:"client_ip,omitempty"`
+	SocksAddr        string   `json:"socks_addr,omitempty"`
+	LastError        string   `json:"last_error,omitempty"`
+	StartedAt        int64    `json:"started_at,omitempty"`
+	HasCreds         bool     `json:"has_credentials"`
+	Username         string   `json:"username,omitempty"` // 当前保存的登录账号
+	Accounts         []string `json:"accounts,omitempty"` // 账号簿中的全部账号
+	CLIBinary        string   `json:"cli_binary"`
+	SystemProxy      string   `json:"system_proxy,omitempty"`       // on/off/conflict/unsupported
+	SystemProxyErr   string   `json:"system_proxy_err,omitempty"`   // conflict 时的原因
+	SystemProxyChain string   `json:"system_proxy_chain,omitempty"` // 链式接管的原代理地址
+	SSHRule          string   `json:"ssh_rule,omitempty"`           // on/off/unsupported
 }
 
 const maxLogLines = 500
 
 // Manager 管理 xtu-connect CLI 子进程的完整生命周期
 type Manager struct {
-	mu        sync.Mutex
-	actionMu  sync.Mutex // 串行化 Start/Stop/Restart，防止并发操作互相踩踏
-	cmd       *exec.Cmd
-	done      chan struct{}
-	state     State
-	clientIP  string
-	socksAddr string
-	lastErr   string
-	startedAt time.Time
-	logLines  []string
-	logPath   string
-	logFile   *os.File
-	cliBin    string
-	SysProxy  *sysProxy // 代理模式：连接后接管系统 PAC
-	SysDNS    *sysDNS   // 整机模式：连接后接管系统 DNS
-
-	tunMode     bool   // 整机分流（TUN）模式开关
-	tunPidFile  string // root 子进程 PID 文件
-	tunFlagFile string // 停止标志文件
-	tunLogFile  string // root 子进程日志
+	mu          sync.Mutex
+	actionMu    sync.Mutex // 串行化 Start/Stop/Restart，防止并发操作互相踩踏
+	cmd         *exec.Cmd
+	done        chan struct{}
+	state       State
+	clientIP    string
+	socksAddr   string
+	lastErr     string
+	startedAt   time.Time
+	logLines    []string
+	logPath     string
+	logFile     *os.File
+	cliBin      string
+	SysProxy    *sysProxy            // 连接后接管系统 PAC，断开时还原
+	SSHConfig   *sshConfig           // 连接后写入 ~/.ssh/config 托管块，断开时移除
+	AccountBook *configs.AccountBook // 多账号簿；nil 表示初始化失败（面板隐藏账号列表）
 }
 
-// setStateLocked 更新状态并在关键跃迁时触发系统代理/DNS 接管或恢复
+// setStateLocked 更新状态并在关键跃迁时触发系统 PAC / SSH 规则的接管或恢复
 func (m *Manager) setStateLocked(to State) {
 	if m.state == to {
 		return
 	}
 	m.state = to
-	var hook func()
-	if m.tunMode {
-		if m.SysDNS != nil {
-			switch to {
-			case StateRunning:
-				hook = m.SysDNS.Apply
-			case StateStopped, StateError:
-				hook = m.SysDNS.Restore
-			}
-		}
-	} else if m.SysProxy != nil {
+	var hooks []func()
+	if m.SysProxy != nil {
 		switch to {
 		case StateRunning:
-			hook = m.SysProxy.Apply
+			hooks = append(hooks, m.SysProxy.Apply)
 		case StateStopped, StateError:
-			hook = m.SysProxy.Restore
+			hooks = append(hooks, m.SysProxy.Restore)
 		}
 	}
-	if hook != nil {
+	if m.SSHConfig != nil {
+		switch to {
+		case StateRunning:
+			hooks = append(hooks, m.SSHConfig.Apply)
+		case StateStopped, StateError:
+			hooks = append(hooks, m.SSHConfig.Remove)
+		}
+	}
+	for _, hook := range hooks {
 		go hook()
 	}
 }
@@ -112,29 +111,13 @@ func (m *Manager) setStateLocked(to State) {
 // HasCreds 报告是否已配置校园网凭据
 func (m *Manager) HasCreds() bool { return configs.Exists() }
 
-// SetTunMode 切换整机分流模式（下次 Start 生效）
-func (m *Manager) SetTunMode(on bool) {
-	m.mu.Lock()
-	m.tunMode = on
-	m.mu.Unlock()
-}
-
-func (m *Manager) TunMode() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.tunMode
-}
-
 func NewManager() *Manager {
 	home, _ := os.UserHomeDir()
 	logPath := filepath.Join(home, ".config", "xtu-connect", "desktop.log")
 	return &Manager{
-		state:       StateStopped,
-		logPath:     logPath,
-		cliBin:      findCLIBinary(),
-		tunPidFile:  filepath.Join(home, ".config", "xtu-connect", "tun.pid"),
-		tunFlagFile: filepath.Join(home, ".config", "xtu-connect", "tun.stop"),
-		tunLogFile:  filepath.Join(home, ".config", "xtu-connect", "tun-child.log"),
+		state:   StateStopped,
+		logPath: logPath,
+		cliBin:  findCLIBinary(),
 	}
 }
 
@@ -166,14 +149,10 @@ func isExecutable(path string) bool {
 	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
-// Start 启动 VPN（与其他生命周期操作互斥）；整机分流模式下走 root 路径
+// Start 启动 VPN（与其他生命周期操作互斥）
 func (m *Manager) Start() error {
 	m.actionMu.Lock()
 	defer m.actionMu.Unlock()
-	if m.TunMode() {
-		m.stop() // 确保代理模式子进程不在运行
-		return m.startTun()
-	}
 	return m.start()
 }
 
@@ -277,7 +256,7 @@ func (m *Manager) pipeLogs(reader io.Reader, logFile *os.File) {
 	}
 }
 
-// parseLine 解析子进程单行日志：写入内存缓冲并驱动状态机（两种模式共用）
+// parseLine 解析子进程单行日志：写入内存缓冲并驱动状态机
 func (m *Manager) parseLine(line string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -306,13 +285,10 @@ func (m *Manager) parseLine(line string) {
 	}
 }
 
-// Stop 优雅停止（幂等）：整机模式用停止标志，代理模式用 SIGTERM
+// Stop 优雅停止（幂等）
 func (m *Manager) Stop() {
 	m.actionMu.Lock()
 	defer m.actionMu.Unlock()
-	if m.TunMode() || m.tunInUse() {
-		m.stopTun()
-	}
 	m.stop()
 }
 
@@ -341,18 +317,10 @@ func (m *Manager) stop() {
 func (m *Manager) Restart() {
 	m.actionMu.Lock()
 	defer m.actionMu.Unlock()
-	if m.TunMode() {
-		m.stopTun()
-	} else {
-		m.stop()
-	}
+	m.stop()
 	// 给服务端时间释放旧会话（单会话策略：同账号同时只允许一个在线客户端）
 	time.Sleep(2 * time.Second)
-	if m.TunMode() {
-		_ = m.startTun()
-	} else {
-		_ = m.start()
-	}
+	_ = m.start()
 }
 
 func (m *Manager) Status() Status {
@@ -365,10 +333,8 @@ func (m *Manager) Status() Status {
 		SocksAddr: m.socksAddr,
 		LastError: m.lastErr,
 		HasCreds:  configs.Exists(),
+		Username:  configs.SavedUsername(),
 		CLIBinary: m.cliBin,
-	}
-	if m.tunMode {
-		s.Mode = "tun"
 	}
 	s.StateText = s.State.Text()
 	if !m.startedAt.IsZero() && (m.state == StateRunning || m.state == StateStarting) {
@@ -377,6 +343,13 @@ func (m *Manager) Status() Status {
 	if m.SysProxy != nil {
 		s.SystemProxy = m.SysProxy.State()
 		s.SystemProxyErr = m.SysProxy.lastErrText()
+		s.SystemProxyChain = m.SysProxy.ChainText()
+	}
+	if m.SSHConfig != nil {
+		s.SSHRule = m.SSHConfig.State()
+	}
+	if m.AccountBook != nil {
+		s.Accounts = m.AccountBook.List()
 	}
 	return s
 }
@@ -398,19 +371,6 @@ func (m *Manager) LogTail(n int) []string {
 }
 
 func (m *Manager) LogPath() string { return m.logPath }
-
-// logTailText 返回内存日志缓冲的最后 n 行（用于错误信息）
-func (m *Manager) logTailText(n int) string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.logLines) == 0 {
-		return "（无日志输出，root 辅助脚本可能未执行）"
-	}
-	if len(m.logLines) > n {
-		return strings.Join(m.logLines[len(m.logLines)-n:], " | ")
-	}
-	return strings.Join(m.logLines, " | ")
-}
 
 // Running 报告 VPN 是否处于连接中/已连接状态
 func (m *Manager) Running() bool {
