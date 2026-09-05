@@ -28,7 +28,7 @@
 
 两种形态：
 
-- **桌面版**（推荐普通用户）：macOS 下载 `XTU-Connect_<版本>_macos-arm64.zip`（Intel 机选 amd64），解压得到 `XTU-Connect.app` 拖入「应用程序」，双击运行后常驻菜单栏；Windows 下载 `xtu-connect-desktop_*.exe`（需与同目录的 `xtu-connect_*.exe` 配套，重命名为 `xtu-connect.exe`）
+- **桌面版**（推荐普通用户）：macOS 下载 `XTU-Connect_<版本>_macos-arm64.dmg`（Intel 机选 amd64），打开后把 `XTU-Connect.app` 拖入「应用程序」，双击运行后常驻菜单栏；Windows 下载 `xtu-connect-desktop_*.exe`（需与同目录的 `xtu-connect_*.exe` 配套，重命名为 `xtu-connect.exe`）
 - **命令行版**：单个可执行文件，适合服务器 / 脚本 / Docker
 
 ### 2. 桌面版使用（GUI）
@@ -183,7 +183,7 @@ port_forwarding = [
 完整编译流程已固化为脚本（这是 Release 产物的唯一构建入口）：
 
 ```bash
-# 一键全平台编译：CLI×5 + 桌面版×5 + macOS .app×2 + checksums，输出到 dist/
+# 一键全平台编译：CLI×5 + 桌面版×5 + macOS DMG×2 + checksums，输出到 dist/
 ./scripts/build.sh              # 版本号自动取 git tag，无 tag 则用日期
 ./scripts/build.sh --version 0.2.0
 
@@ -199,7 +199,7 @@ make clean    # 清理 dist/
 |---|---|---|
 | xtu-connect | darwin/arm64+amd64, windows/amd64, linux/amd64+arm64 | 纯 Go，CGO 关闭，随处可交叉编译 |
 | xtu-connect-desktop | 同上 + darwin 双架构 | Windows/Linux 纯 Go；**macOS 托盘依赖 Cocoa(cgo)，须在 macOS 本机编译** |
-| XTU-Connect.app | macos arm64/amd64 | 含 GUI+CLI 双二进制、Info.plist、icns 图标、adhoc 签名，zip 打包 |
+| XTU-Connect_*.dmg | macos arm64/amd64 | .app 拖拽安装镜像：含 GUI+CLI 双二进制、Info.plist、icns 图标、adhoc 签名，附「应用程序」快捷链接 |
 
 CI/发布流水线（`.github/workflows/`）：
 

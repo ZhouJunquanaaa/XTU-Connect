@@ -9,7 +9,7 @@
 #   xtu-connect_<ver>_<os>-<arch>[.exe]              CLI（纯 Go，随处可编译）
 #   xtu-connect-desktop_<ver>_<os>-<arch>[.exe]      桌面版（Windows/Linux 纯 Go；
 #                                                     macOS 需在本机编译，依赖 cgo）
-#   XTU-Connect_<ver>_macos_<arch>.zip               macOS 应用包（.app，菜单栏常驻）
+#   XTU-Connect_<ver>_macos-<arch>.dmg               macOS 应用包（.app 拖拽安装镜像）
 #   checksums.txt                                     全部产物的 SHA256
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -130,8 +130,15 @@ PLIST
     codesign --force --sign - "$bundle" >/dev/null 2>&1 || true
   fi
 
-  (cd "$root" && zip -qry "../XTU-Connect_${VERSION}_macos-${arch}.zip" "$app")
-  echo "==> 应用包 macos/$arch: XTU-Connect_${VERSION}_macos-${arch}.zip"
+  # 打成 DMG：镜像内附 Applications 链接，打开后把 .app 拖进「应用程序」即可
+  local staging="$root/dmg"
+  mkdir -p "$staging"
+  cp -R "$bundle" "$staging/"
+  ln -s /Applications "$staging/Applications"
+  hdiutil create -volname "XTU-Connect" \
+    -srcfolder "$staging" -ov -format UDZO \
+    "$DIST/XTU-Connect_${VERSION}_macos-${arch}.dmg" > /dev/null
+  echo "==> 应用包 macos/$arch: XTU-Connect_${VERSION}_macos-${arch}.dmg"
 }
 
 if [[ "$HOST_OS" == "darwin" ]]; then
