@@ -3,6 +3,7 @@ package keylog
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -34,8 +35,11 @@ func TestOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("key-log permissions = %o, want 600", got)
+	// Windows 不支持 POSIX 权限位（新建文件恒为 0666），只校验 Unix 行为
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("key-log permissions = %o, want 600", got)
+		}
 	}
 }
 

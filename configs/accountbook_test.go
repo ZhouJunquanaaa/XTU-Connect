@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -89,8 +90,11 @@ func TestAccountBookFilesNotPlaintext(t *testing.T) {
 	if _, err := os.ReadFile(filepath.Join(dir, ".secret.key")); err != nil {
 		t.Fatal(err)
 	}
-	if info, err := os.Stat(filepath.Join(dir, ".secret.key")); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("密钥文件权限错误: %v", info)
+	// Windows 不支持 POSIX 权限位（新建文件恒为 0666），只校验 Unix 行为
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(filepath.Join(dir, ".secret.key")); err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("密钥文件权限错误: %v", info)
+		}
 	}
 }
 

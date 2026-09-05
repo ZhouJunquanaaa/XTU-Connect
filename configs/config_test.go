@@ -25,6 +25,7 @@ func TestDefault(t *testing.T) {
 func TestSavedUsername(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir) // Windows 上 os.UserHomeDir 读 USERPROFILE
 	path := filepath.Join(dir, ".config", "xtu-connect", "config.toml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)

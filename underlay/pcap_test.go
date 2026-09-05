@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -72,8 +73,9 @@ func TestPCAPCaptureRecordsTCPInBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("PCAP permissions = %o, want 600", got)
+	// Windows 不支持 POSIX 权限位（新建文件恒为 0666），只校验 Unix 行为
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("PCAP permissions = %o, want 600", info.Mode().Perm())
 	}
 	packets := parsePCAPPackets(t, data)
 	if len(packets) != 2 {
